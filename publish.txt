@@ -1,0 +1,9 @@
+(1) Clear out the content of dist folder.
+(2) Authenticate with PyPI:
+  poetry config pypi-token.pypi your-pypi-token
+(3) Run: 
+  poetry build
+(4) Upload the package to PyPI:
+  poetry publish
+
+

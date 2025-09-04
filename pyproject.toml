@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "quantum-flows"
+version = "0.1.1
+description = "A python library for interacting with Transilvania-Quantum Quantum Flows quantum computing API backbone."
+authors = ["Radu Marginean <radu.marginean@transilvania-quantum.com>"]
+license='MIT'
+readme = "README.md"
+repository = "https://github.com/Transilvania-Quantum/quantum-flows"
+packages = [{include = "quantum_flow"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+python-keycloak = "^4.7.3"
+cryptography = "^44.0.2"
+qiskit-nature = "^0.7.2"
+qiskit = "1.4.4"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
