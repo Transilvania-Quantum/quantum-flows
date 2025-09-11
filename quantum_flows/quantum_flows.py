@@ -467,14 +467,13 @@ class InputData:
 class QuantumFlowsProvider:
 
     _asp_net_port_dev = "5001"
-    _asp_net_port_prod = "443"
-    _keycloak_port = "8443"
+    _keycloak_port = "8080"
     _client_id = "straful-client"
     _realm_name = "straful-realm"
     _provider_url_dev = "https://localhost"
-    _provider_url_prod = "https://quantum-flows.transilvania-quantum.org"
-    _keycloak_url_dev = "https://localhost"
-    _keycloak_url_prod = "https://keycloak.transilvania-quantum.org"
+    _provider_url_prod = "https://quantum-flows.transilvania-quantum.com"
+    _keycloak_url_dev = "http://localhost"
+    _keycloak_url_prod = "https://keycloak.transilvania-quantum.com"
 
     def __init__(self, use_https=True, debug=False):
         self._use_https = use_https
@@ -487,14 +486,14 @@ class QuantumFlowsProvider:
         self._asp_net_url = (
             f"{self._provider_url_dev}:{self._asp_net_port_dev}"
             if self._debug
-            else f"{self._provider_url_prod}:{self._asp_net_port_prod}"
+            else f"{self._provider_url_prod}"
         )
         self._auth_call_back_url = f"{self._asp_net_url}/auth/callback"
         self._show_code_callback_url = f"{self._asp_net_url}/auth/showcode"
         self._keycloak_server_url = (
             f"{self._keycloak_url_dev}:{self._keycloak_port}"
             if self._debug
-            else f"{self._keycloak_url_prod}:{self._keycloak_port}"
+            else f"{self._keycloak_url_prod}"
         )
 
         if not self._is_server_online(self._keycloak_server_url):
