@@ -146,6 +146,7 @@ class InputData:
             "ising-model",
             "lattice",
             "lp-model",
+            "max-iterations",
             "molecule-info",
             "operator",
             "pub",
