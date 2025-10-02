@@ -9,7 +9,9 @@ import time
 import uuid
 import webbrowser
 
+from urllib.parse import urlencode
 from keycloak import KeycloakOpenID
+
 from qiskit import qpy
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Operator, Pauli, PauliList, SparsePauliOp
@@ -26,8 +28,7 @@ from qiskit_nature.second_q.hamiltonians.lattices import (
 from qiskit_nature.second_q.hamiltonians.lattices.boundary_condition import (
     BoundaryCondition,
 )
-from urllib.parse import urlencode
-
+from qiskit_optimization import QuadraticProgram
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -127,6 +128,10 @@ class InputData:
             elif label == "inference-data":
                 self.validate_inference_data(content)
                 self.data[label] = content
+            elif label == "quadratic-program":
+                self.validate_quadratic_program(content)
+                lp_string = content.export_as_lp_string()
+                self.data[label] = lp_string
             else:
                 self.data[label] = content
         except (OverflowError, TypeError, ValueError):
@@ -144,6 +149,7 @@ class InputData:
             "molecule-info",
             "operator",
             "pub",
+            "quadratic-program",
             "training-data",
         ]:
             raise Exception(
@@ -344,6 +350,10 @@ class InputData:
                 raise Exception(
                     "All 'data-point' vectors in inference data entries must have the same length."
                 )
+
+    def validate_quadratic_program(self, qp):
+        if not isinstance(qp, QuadraticProgram):
+            raise Exception("The input object must be an instance of QuadraticProgram class from Qiskit Optimization module.")
 
     def validate_and_serialize_pub(self, pub):
         shots = None
