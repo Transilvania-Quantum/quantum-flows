@@ -675,6 +675,8 @@ In case the service has been recently started please wait 5 minutes for it to be
             input_data_items.append(backend)
             input_data_labels.append("shots")
             input_data_items.append(str(shots))
+            input_data_labels.append("max-iterations")
+            input_data_items.append(str(max_iterations))
             for input_data_label in input_data.data.keys():
                 input_data_labels.append(input_data_label)
                 content = input_data.data[input_data_label]
