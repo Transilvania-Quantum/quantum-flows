@@ -30,6 +30,7 @@ from qiskit_nature.second_q.hamiltonians.lattices.boundary_condition import (
 )
 from qiskit_optimization import QuadraticProgram
 
+
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, complex):
@@ -114,6 +115,9 @@ class InputData:
                 if not "pubs" in self.data.keys():
                     self.data["pubs"] = []
                 self.data["pubs"].append(content)
+            elif label == "max-iterations":
+                self.validate_max_iterations(content)
+                self.data[label] = content
             elif label == "molecule-info":
                 self.validate_molecule_info(content)
                 self.data[label] = content
@@ -225,6 +229,10 @@ class InputData:
             raise Exception(
                 "This input lattice object is not supported. Please use an object of the following types: Lattice, LineLattice, TriangularLattice, SquareLattice, KagomeLattice, HyperCubicLattice or HexagonalLattice. All of them are available in the qiskit_nature library."
             )
+
+    def validate_max_iterations(self, max_iterations):
+        if not isinstance(max_iterations, int) or max_iterations <= 0:
+            raise Exception("The 'max-iterations' must be a positive integer.")
 
     def validate_molecule_info(self, molecule_info):
         if not isinstance(molecule_info["symbols"], list):
@@ -354,7 +362,9 @@ class InputData:
 
     def validate_quadratic_program(self, qp):
         if not isinstance(qp, QuadraticProgram):
-            raise Exception("The input object must be an instance of QuadraticProgram class from Qiskit Optimization module.")
+            raise Exception(
+                "The input object must be an instance of QuadraticProgram class from Qiskit Optimization module."
+            )
 
     def validate_and_serialize_pub(self, pub):
         shots = None
