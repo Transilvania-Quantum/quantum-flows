@@ -115,9 +115,6 @@ class InputData:
                 if not "pubs" in self.data.keys():
                     self.data["pubs"] = []
                 self.data["pubs"].append(content)
-            elif label == "max-iterations":
-                self.validate_max_iterations(content)
-                self.data[label] = content
             elif label == "molecule-info":
                 self.validate_molecule_info(content)
                 self.data[label] = content
@@ -229,10 +226,6 @@ class InputData:
             raise Exception(
                 "This input lattice object is not supported. Please use an object of the following types: Lattice, LineLattice, TriangularLattice, SquareLattice, KagomeLattice, HyperCubicLattice or HexagonalLattice. All of them are available in the qiskit_nature library."
             )
-
-    def validate_max_iterations(self, max_iterations):
-        if not isinstance(max_iterations, int) or max_iterations <= 0:
-            raise Exception("The 'max-iterations' must be a positive integer.")
 
     def validate_molecule_info(self, molecule_info):
         if not isinstance(molecule_info["symbols"], list):
@@ -651,8 +644,9 @@ In case the service has been recently started please wait 5 minutes for it to be
         backend=None,
         shots=None,
         workflow_id=None,
-        input_data=InputData(),
         comments="",
+        max_iterations=None,
+        input_data=InputData()
     ):
         if not self._verify_user_is_authenticated():
             return
@@ -663,11 +657,17 @@ In case the service has been recently started please wait 5 minutes for it to be
             print("Please specify a workflow Id.")
             return
         if shots is not None and not isinstance(shots, int):
-            print("The number of shots must be an integer or 'None'.")
+            print("The optional number of shots input argument must be an integer.")
             return
         if not self.is_valid_uuid(workflow_id):
-            print("The specified workflow Id is not valid.")
+            print("The specified workflow Id is not a valid GUID.")
             return
+        if max_iterations is not None:
+            if not isinstance(max_iterations, int) or max_iterations <= 0:
+                print(
+                    "The optional 'max-iterations' input argument must be a positive integer."
+                )
+                return
         try:
             input_data_labels = []
             input_data_items = []
@@ -686,6 +686,7 @@ In case the service has been recently started please wait 5 minutes for it to be
                 "WorkflowId": workflow_id,
                 "Shots": shots,
                 "Comments": comments,
+                "MaxIterations": max_iterations,
                 "InputDataLabels": input_data_labels,
                 "InputDataItems": input_data_items,
                 "QiskitVersion": qiskit.__version__,
