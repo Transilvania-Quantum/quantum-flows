@@ -348,9 +348,14 @@ class InputData:
                     "Each dictionary in the list of inference data points must contain a 'data-point' key."
                 )
             vector = data["data-point"]
+            data_tags = data["data-tags"] if "data-tags" in data else None
             if not isinstance(vector, list):
                 raise Exception(
                     "The 'data-point' value must be a list of numeric values."
+                )
+            if data_tags is not None and not isinstance(data_tags, list):
+                raise Exception(
+                    "The optional 'data-tags' value must be a list of strings."
                 )
             if not all(isinstance(item, (int, float)) for item in vector):
                 raise Exception(
@@ -361,6 +366,10 @@ class InputData:
             if len(vector) != vector_size:
                 raise Exception(
                     "All 'data-point' vectors in inference data entries must have the same length."
+                )
+            if data_tags is not None and len(data_tags) != vector_size:
+                raise Exception(
+                    "If provided, the 'data-tags' list must have the same length as the 'data-point' vector."
                 )
 
     def validate_quadratic_program(self, qp):
