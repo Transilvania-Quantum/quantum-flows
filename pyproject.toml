@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "quantum-flows"
-version = "0.1.8"
+version = "0.1.11"
 description = "A python library for interacting with Transilvania-Quantum Quantum Flows quantum computing API backbone."
 authors = ["Radu Marginean <radu.marginean@transilvania-quantum.com>"]
 license='MIT'

@@ -9,8 +9,9 @@ import time
 import uuid
 import webbrowser
 
-from urllib.parse import urlencode
+from IPython.display import display, HTML
 from keycloak import KeycloakOpenID
+from urllib.parse import urlencode
 
 from qiskit import qpy
 from qiskit import QuantumCircuit
@@ -302,9 +303,14 @@ class InputData:
                     "Each dictionary in the list 'training_data' must contain a 'data-point' key."
                 )
             vector = data["data-point"]
+            data_tags = data["data-tags"] if "data-tags" in data else None
             if not isinstance(vector, list):
                 raise Exception(
                     "The 'data-point' value must be a list of numeric values."
+                )
+            if data_tags is not None and not isinstance(data_tags, list):
+                raise Exception(
+                    "The optional 'data-tags' value must be a list of strings."
                 )
             if not all(isinstance(item, (int, float)) for item in vector):
                 raise Exception(
@@ -315,6 +321,10 @@ class InputData:
             if len(vector) != vector_size:
                 raise Exception(
                     "All 'data-point' vectors in training data entries must have the same length."
+                )
+            if data_tags is not None and len(data_tags) != vector_size:
+                raise Exception(
+                    "If provided, the 'data-tags' list must have the same length as the 'data-point' vector."
                 )
             if not "label" in data:
                 raise Exception(
@@ -531,8 +541,15 @@ In case the service has been recently started please wait 5 minutes for it to be
             self._refresh_token_expiration_time = None
             self._store_state()
             auth_url = self._get_authentication_url()
-            webbrowser.open(auth_url)
-            auth_code = self._get_autehntication_code()
+            opened = webbrowser.open(auth_url)
+            if not opened:
+                display(
+                    HTML(
+                        f"<p>Please click to authenticate: "
+                        f'<a href="{auth_url}" target="_blank">{auth_url}</a></p>'
+                    )
+                )
+            auth_code = self._get_authentication_code()
             token_response = self._keycloak_openid.token(
                 grant_type="authorization_code",
                 code=auth_code,
@@ -546,6 +563,7 @@ In case the service has been recently started please wait 5 minutes for it to be
             self._refresh_token_expiration_time = (
                 time.time() + token_response["refresh_expires_in"] - 5
             )  # seconds
+            print("Authentication successful.")
         except AuthenticationFailure as ex:
             print(ex.message)
         except AuthorizationFailure as ex:
@@ -646,7 +664,7 @@ In case the service has been recently started please wait 5 minutes for it to be
         workflow_id=None,
         comments="",
         max_iterations=None,
-        input_data=InputData()
+        input_data=InputData(),
     ):
         if not self._verify_user_is_authenticated():
             return
@@ -899,9 +917,9 @@ In case the service has been recently started please wait 5 minutes for it to be
         }
         return f"{self._keycloak_server_url}/realms/{self._realm_name}/protocol/openid-connect/auth?{urlencode(auth_url_params)}"
 
-    def _get_autehntication_code(self):
+    def _get_authentication_code(self):
 
-        timeout_seconds = 6
+        timeout_seconds = 16
         start_time = time.time()
 
         try:
@@ -920,7 +938,11 @@ In case the service has been recently started please wait 5 minutes for it to be
                 data = response.text
                 auth_code = data.split(": ")[1]
                 return auth_code
-        except:
+        except Exception as e:
+            if self._debug:
+                print(
+                    f"Failed to retrieve the authorization code from the authentication provider: {e}"
+                )
             pass
 
         raise AuthorizationFailure(
