@@ -148,7 +148,7 @@ class InputData:
             "ising-model",
             "lattice",
             "lp-model",
-            "max-iterations",
+            "max-fun-evaluations",
             "molecule-info",
             "operator",
             "pub",
@@ -672,7 +672,7 @@ In case the service has been recently started please wait 5 minutes for it to be
         shots=None,
         workflow_id=None,
         comments="",
-        max_iterations=None,
+        max_fun_evaluations=None,
         input_data=InputData(),
     ):
         if not self._verify_user_is_authenticated():
@@ -689,10 +689,10 @@ In case the service has been recently started please wait 5 minutes for it to be
         if not self.is_valid_uuid(workflow_id):
             print("The specified workflow Id is not a valid GUID.")
             return
-        if max_iterations is not None:
-            if not isinstance(max_iterations, int) or max_iterations <= 0:
+        if max_fun_evaluations is not None:
+            if not isinstance(max_fun_evaluations, int) or max_fun_evaluations <= 0:
                 print(
-                    "The optional 'max-iterations' input argument must be a positive integer."
+                    "The optional 'max-fun-evaluations' input argument must be a positive integer."
                 )
                 return
         try:
@@ -702,8 +702,8 @@ In case the service has been recently started please wait 5 minutes for it to be
             input_data_items.append(backend)
             input_data_labels.append("shots")
             input_data_items.append(str(shots))
-            input_data_labels.append("max-iterations")
-            input_data_items.append(str(max_iterations))
+            input_data_labels.append("max-fun-evaluations")
+            input_data_items.append(str(max_fun_evaluations))
             for input_data_label in input_data.data.keys():
                 input_data_labels.append(input_data_label)
                 content = input_data.data[input_data_label]
@@ -715,7 +715,7 @@ In case the service has been recently started please wait 5 minutes for it to be
                 "WorkflowId": workflow_id,
                 "Shots": shots,
                 "Comments": comments,
-                "MaxIterations": max_iterations,
+                "MaxIterations": max_fun_evaluations,
                 "InputDataLabels": input_data_labels,
                 "InputDataItems": input_data_items,
                 "QiskitVersion": qiskit.__version__,
