@@ -715,7 +715,7 @@ In case the service has been recently started please wait 5 minutes for it to be
                 "WorkflowId": workflow_id,
                 "Shots": shots,
                 "Comments": comments,
-                "MaxIterations": max_fun_evaluations,
+                "MaxFunEvaluations": max_fun_evaluations,
                 "InputDataLabels": input_data_labels,
                 "InputDataItems": input_data_items,
                 "QiskitVersion": qiskit.__version__,
