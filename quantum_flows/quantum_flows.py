@@ -6,9 +6,11 @@ import qiskit
 import requests
 import secrets
 import time
+import traceback
 import uuid
 import webbrowser
 
+from collections.abc import Sequence
 from IPython.display import display, HTML
 from keycloak import KeycloakOpenID
 from urllib.parse import urlencode
@@ -16,7 +18,6 @@ from urllib.parse import urlencode
 from qiskit import qpy
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Operator, Pauli, PauliList, SparsePauliOp
-from qiskit.quantum_info.operators.linear_op import LinearOp
 from qiskit_nature.second_q.hamiltonians.lattices import (
     KagomeLattice,
     Lattice,
@@ -32,20 +33,40 @@ from qiskit_nature.second_q.hamiltonians.lattices.boundary_condition import (
 from qiskit_optimization import QuadraticProgram
 
 
+DEFAULT_TIMEOUT = (3.05, 10)  # (connect timeout, read timeout)
+
+
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
+        if isinstance(obj, np.generic):
+            if np.iscomplexobj(obj):
+                c = complex(obj)
+                return {"real": c.real, "imag": c.imag}
+            return obj.item()
         if isinstance(obj, complex):
             return {"real": obj.real, "imag": obj.imag}
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         if isinstance(obj, BoundaryCondition):
-            # Convert enum to string
-            return str(obj)
+            return obj.name
+        if isinstance(obj, (set, frozenset)):
+            return list(obj)
+        if isinstance(obj, tuple):
+            return list(obj)
+
         return super().default(obj)
 
 
-def all_numbers(lst):
-    return all(isinstance(x, (int, float, complex)) for x in lst)
+def _is_number(x) -> bool:
+    return isinstance(x, (int, float, complex, np.generic))
+
+
+def _to_complex_dict(c):
+    if isinstance(c, np.generic):
+        c = c.item()
+    if isinstance(c, complex):
+        return {"real": float(c.real), "imag": float(c.imag)}
+    return {"real": float(c), "imag": 0.0}
 
 
 def serialize_circuit(circuit):
@@ -57,13 +78,11 @@ def serialize_circuit(circuit):
 
 
 class AuthenticationFailure(Exception):
-    def __init__(self, message):
-        self.message = message
+    pass
 
 
 class AuthorizationFailure(Exception):
-    def __init__(self, message):
-        self.message = message
+    pass
 
 
 class Job:
@@ -88,18 +107,44 @@ class InputData:
         if label:
             self.add_data(label, content)
 
+    def _assert_jsonable(self, value, label: str):
+        try:
+            json.dumps(value, cls=CustomJSONEncoder)
+        except (TypeError, OverflowError, ValueError) as e:
+            raise Exception(
+                f"Input data '{label}' is not JSON-serializable: {e}"
+            ) from e
+
     def __str__(self):
-        return json.dumps(self.data, indent=2, cls=CustomJSONEncoder)
+        try:
+            return json.dumps(self.data, indent=2, cls=CustomJSONEncoder)
+        except ValueError as e:
+            raise Exception(f"Invalid input data format: {e}")
+        except (OverflowError, TypeError) as e:
+            raise Exception(f"Input data content must be JSON serializable: {e}.")
+
+    def _normalize_operator_input(self, content):
+        if isinstance(content, tuple):
+            if len(content) != 2:
+                raise Exception(
+                    "Operator tuple must be exactly (PauliList, coeffs_or_none)."
+                )
+            op, coeffs = content
+            if not isinstance(op, PauliList):
+                raise Exception(
+                    "Operator tuple is only supported for (PauliList, coeffs_or_none)."
+                )
+            return op, coeffs
+        return content, None
 
     def add_data(self, label, content):
         self.check_label(label, self.data)
         try:
             if label == "operator":
-                operator = content
-                self.validate_operator(operator)
-                coeffs = None
-                if type(content) == tuple:
-                    operator, coeffs = content
+                operator, coeffs = self._normalize_operator_input(content)
+                self.validate_operator(
+                    (operator, coeffs) if coeffs is not None else operator
+                )
                 sparse_pauli_operator = self.to_sparse_pauli_operator(
                     operator, coeffs=coeffs
                 )
@@ -111,36 +156,48 @@ class InputData:
                     "coefficients": coefficients,
                     "operator-string-representation": str(operator),
                 }
-            elif label == "pub":
+            elif label == "pubs":
                 content = self.validate_and_serialize_pub(content)
-                if not "pubs" in self.data.keys():
+                if "pubs" not in self.data:
                     self.data["pubs"] = []
+                self._assert_jsonable(content, label)
                 self.data["pubs"].append(content)
             elif label == "molecule-info":
                 self.validate_molecule_info(content)
+                self._assert_jsonable(content, label)
                 self.data[label] = content
             elif label == "lattice":
-                self.data[label] = self.lattice_to_dict(content)
+                lattice_dict = self.lattice_to_dict(content)
+                self._assert_jsonable(lattice_dict, label)
+                self.data[label] = lattice_dict
             elif label == "ising-model":
                 self.validate_ising_model(content)
+                self._assert_jsonable(content, label)
                 self.data[label] = content
             elif label == "training-data":
                 self.validate_training_data(content)
+                self._assert_jsonable(content, label)
                 self.data[label] = content
             elif label == "inference-data":
                 self.validate_inference_data(content)
+                self._assert_jsonable(content, label)
                 self.data[label] = content
             elif label == "quadratic-program":
                 self.validate_quadratic_program(content)
                 lp_string = content.export_as_lp_string()
+                self._assert_jsonable(lp_string, label)
                 self.data[label] = lp_string
             else:
+                self._assert_jsonable(content, label)
                 self.data[label] = content
-        except (OverflowError, TypeError, ValueError):
-            raise Exception("Input data content must be JSON serializable.")
+
+        except ValueError as e:
+            raise Exception(f"Invalid input data format: {e}")
+        except (OverflowError, TypeError) as e:
+            raise Exception(f"Input data content must be JSON serializable: {e}")
 
     def check_label(self, label, data):
-        if type(label) != str:
+        if not isinstance(label, str):
             raise Exception("Input data label must be string.")
         if label not in [
             "ansatz-parameters",
@@ -151,14 +208,14 @@ class InputData:
             "max-fun-evaluations",
             "molecule-info",
             "operator",
-            "pub",
+            "pubs",
             "quadratic-program",
             "training-data",
         ]:
             raise Exception(
-                f"Input data of type {label} is not supported. Please choose one of the following options: 'ansatz-parameters', 'inference-data' 'ising-model', 'lattice', 'lp-model', 'molecule-info', 'operator', 'pub', 'training-data'."
+                f"Input data of type {label} is not supported. Please choose one of the following options: 'ansatz-parameters', 'inference-data' 'ising-model', 'lattice', 'lp-model', 'molecule-info', 'operator', 'pub', 'pubs', 'training-data'."
             )
-        if label != "pub" and label in data.keys():
+        if label != "pubs" and label in data.keys():
             raise Exception(
                 f"An input data item of type '{label}' has already been added to the job input data. Multiple data items of same category are allowed only for PUBs."
             )
@@ -168,7 +225,14 @@ class InputData:
             lattice_data = {
                 "type": "LineLattice",
                 "num_nodes": lattice.num_nodes,
-                "boundary_condition": lattice.boundary_condition[0].name,
+                "boundary_condition": [
+                    bc.name
+                    for bc in (
+                        lattice.boundary_condition
+                        if isinstance(lattice.boundary_condition, tuple)
+                        else (lattice.boundary_condition,)
+                    )
+                ],
                 "edge_parameter": lattice.edge_parameter,
                 "onsite_parameter": lattice.onsite_parameter,
             }
@@ -178,7 +242,14 @@ class InputData:
                 "type": "TriangularLattice",
                 "rows": lattice.rows,
                 "cols": lattice.cols,
-                "boundary_condition": lattice.boundary_condition.name,
+                "boundary_condition": [
+                    bc.name
+                    for bc in (
+                        lattice.boundary_condition
+                        if isinstance(lattice.boundary_condition, tuple)
+                        else (lattice.boundary_condition,)
+                    )
+                ],
                 "edge_parameter": lattice.edge_parameter,
                 "onsite_parameter": lattice.onsite_parameter,
             }
@@ -229,14 +300,31 @@ class InputData:
             )
 
     def validate_molecule_info(self, molecule_info):
-        if not isinstance(molecule_info["symbols"], list):
-            raise Exception("The 'symbols' must be a list of nuclei.")
-        if not isinstance(molecule_info["coords"], list):
-            raise Exception(
-                "The 'coords' must be a list of tuples representing the x, y, z position of each nuclei."
+        if not isinstance(molecule_info, dict):
+            raise Exception("The 'molecule_info' must be a dictionary.")
+        if (
+            "symbols" not in molecule_info
+            or not isinstance(molecule_info["symbols"], list)
+            or not all(isinstance(x, str) for x in molecule_info["symbols"])
+        ):
+            raise Exception("Add 'symbols' as a list of nuclei name strings.")
+        if (
+            "coords" not in molecule_info
+            or not isinstance(molecule_info["coords"], list)
+            or len(molecule_info["coords"]) != len(molecule_info["symbols"])
+            or not all(
+                isinstance(c, tuple) and len(c) == 3 for c in molecule_info["coords"]
             )
-        if "mutiplicity" in molecule_info and not isinstance(
-            molecule_info["mutiplicity"], int
+            or not all(
+                all(isinstance(i, (int, float)) for i in x)
+                for x in molecule_info["coords"]
+            )
+        ):
+            raise Exception(
+                "The 'coords' must be a list of tuples with numbers representing the x, y, z position of each nuclei."
+            )
+        if "multiplicity" in molecule_info and not isinstance(
+            molecule_info["multiplicity"], int
         ):
             raise Exception("The 'multiplicity' must be an integer.")
         if "charge" in molecule_info and not isinstance(molecule_info["charge"], int):
@@ -247,12 +335,17 @@ class InputData:
             and molecule_info["units"].lower() != "bohr"
         ):
             raise Exception("The 'units' must be either 'Angstrom' or 'Bohr'.")
-        if "masses" in molecule_info and not all(
-            isinstance(m, (int, float)) for m in molecule_info["masses"]
-        ):
-            raise Exception(
-                "The 'masses' must be a list of floats, one for each nucleus in the molecule."
-            )
+        if "masses" in molecule_info:
+            if not isinstance(molecule_info["masses"], list):
+                raise Exception("The 'masses' must be a list of numbers.")
+            if not all(isinstance(m, (int, float)) for m in molecule_info["masses"]):
+                raise Exception(
+                    "The 'masses' must be a list of numbers, one for each nucleus in the molecule."
+                )
+            if len(molecule_info["masses"]) != len(molecule_info["symbols"]):
+                raise Exception(
+                    "The 'masses' list must have the same length as the 'symbols' list."
+                )
 
     def validate_ising_model(self, ising_model):
         if not isinstance(ising_model, dict):
@@ -293,9 +386,14 @@ class InputData:
 
     def validate_training_data(self, training_data):
         vector_size = None
+        is_classification = False
+        is_regression = False
+        line = 0
+        output_length = None
         if not isinstance(training_data, list):
             raise Exception("The 'training_data' must be a list of dictionaries.")
         for data in training_data:
+            line += 1
             if not isinstance(data, dict):
                 raise Exception("The 'training_data' must be a list of dictionaries.")
             if not "data-point" in data:
@@ -310,11 +408,11 @@ class InputData:
                 )
             if data_tags is not None and not isinstance(data_tags, list):
                 raise Exception(
-                    "The optional 'data-tags' value must be a list of strings."
+                    f"The optional 'data-tags' value must be a list of strings (check line {line})."
                 )
             if not all(isinstance(item, (int, float)) for item in vector):
                 raise Exception(
-                    "The 'data-point' value must be a list of numeric values (int or float)."
+                    f"The 'data-point' value must be a list of numeric values (int or float) (check line {line})."
                 )
             if vector_size is None:
                 vector_size = len(vector)
@@ -324,16 +422,46 @@ class InputData:
                 )
             if data_tags is not None and len(data_tags) != vector_size:
                 raise Exception(
-                    "If provided, the 'data-tags' list must have the same length as the 'data-point' vector."
+                    f"If provided, the 'data-tags' list must have the same length as the 'data-point' vector (check line {line})."
                 )
-            if not "label" in data:
+            if data_tags is not None and not all(
+                isinstance(tag, str) for tag in data_tags
+            ):
                 raise Exception(
-                    "Each dictionary in the list of training data points must contain a 'label' key."
+                    f"If provided, the 'data-tags' list must contain only strings (check line {line})."
                 )
-            label = data["label"]
-            if not isinstance(label, (int, float)):
+            if "label" in data:
+                is_classification = True
+                label = data["label"]
+                if not isinstance(label, int):
+                    raise Exception(
+                        f"The 'label' value must be an integer (check line {line})."
+                    )
+            if "output" in data:
+                is_regression = True
+                output = data["output"]
+                if not isinstance(output, (int, float, list)) or (
+                    isinstance(output, list)
+                    and not all(isinstance(value, (int, float)) for value in output)
+                ):
+                    raise Exception(
+                        f"The 'output' value must be a numeric type (int, float) or a list of numeric values (check line {line})."
+                    )
+                values = output if isinstance(output, list) else [output]
+                for value in values:
+                    if value < -1 or value > 1:
+                        raise Exception(
+                            f"The 'output' numeric values must be in [-1, 1] range (check line {line})."
+                        )
+                if output_length is None:
+                    output_length = len(values)
+                elif output_length != len(values):
+                    raise Exception(
+                        f"All 'output' lists in training data entries must have the same length. Choose either a consistent sized list or a numeric value (check line {line})."
+                    )
+            if is_classification and is_regression:
                 raise Exception(
-                    "The 'label' value must be a numeric type (int or float)."
+                    "The training data cannot contain both 'label' and 'output' keys. Please choose either classification or regression data template."
                 )
 
     def validate_inference_data(self, inference_data):
@@ -353,10 +481,15 @@ class InputData:
                 raise Exception(
                     "The 'data-point' value must be a list of numeric values."
                 )
-            if data_tags is not None and not isinstance(data_tags, list):
-                raise Exception(
-                    "The optional 'data-tags' value must be a list of strings."
-                )
+            if data_tags is not None:
+                if not isinstance(data_tags, list):
+                    raise Exception(
+                        "The optional 'data-tags' value must be a list of strings."
+                    )
+                if not all(isinstance(tag, str) for tag in data_tags):
+                    raise Exception(
+                        "If provided, 'data-tags' must contain only strings."
+                    )
             if not all(isinstance(item, (int, float)) for item in vector):
                 raise Exception(
                     "The 'data-point' value must be a list of numeric values (int or float)."
@@ -378,90 +511,105 @@ class InputData:
                 "The input object must be an instance of QuadraticProgram class from Qiskit Optimization module."
             )
 
-    def validate_and_serialize_pub(self, pub):
-        shots = None
-        paramaters = None
-        if type(pub) == QuantumCircuit:
-            quantum_circuit = pub
-        elif type(pub) != tuple:
-            raise Exception(
-                "A pub can be either a quantum circuit or a tuple containing a quantum circuit, optionally second a list of circuit parameters and optionally third a number of shots."
-            )
-        elif len(pub) == 3:
-            quantum_circuit, paramaters, shots = pub
-        elif len(pub) == 2:
-            quantum_circuit, paramaters = pub
-        elif len(pub) == 1:
-            quantum_circuit = pub[0]
+    def _normalize_numeric_sequence(self, name: str, value):
+        if value is None:
+            return None
+        if isinstance(value, np.ndarray):
+            seq = value.ravel().tolist()
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            seq = list(value)
         else:
             raise Exception(
-                "A pub can be a tuple with at most 3 elements: a quantum circuit, a list of circuit paramaters and a number of shots."
+                f"'{name}' must be a numeric sequence (list/tuple/np.ndarray) or None."
             )
-        if shots is not None and type(shots) != int:
+        if not all(_is_number(x) for x in seq):
+            raise Exception(f"'{name}' must contain only numbers.")
+        return seq
+
+    def validate_and_serialize_pub(self, pub):
+        shots = None
+        parameters = None
+
+        if isinstance(pub, QuantumCircuit):
+            quantum_circuit = pub
+        elif isinstance(pub, tuple):
+            if len(pub) == 3:
+                quantum_circuit, parameters, shots = pub
+            elif len(pub) == 2:
+                quantum_circuit, parameters = pub
+            elif len(pub) == 1:
+                (quantum_circuit,) = pub
+            else:
+                raise Exception("A pub tuple must have 1..3 elements.")
+            if not isinstance(quantum_circuit, QuantumCircuit):
+                raise Exception("First element must be a QuantumCircuit.")
+        else:
             raise Exception(
-                "The 'shots' setting in a PUB must be an integer and be positioned as the third element of a tuple specifying a PUB."
-            )
-        if paramaters is not None and type(paramaters) != list:
-            raise Exception(
-                "The 'paramaters' in a PUB must be a list of numbers and be positioned as the second element of a tuple specifying a PUB."
-            )
-        if quantum_circuit.num_parameters == 0 and (
-            paramaters is not None and len(paramaters) != 0
-        ):
-            raise Exception(
-                "A circuit with zero parameters must have 'paramaters' argument 'None' or an empty list."
-            )
-        elif paramaters is not None and quantum_circuit.num_parameters != len(
-            paramaters
-        ):
-            raise Exception(
-                f"The number of paramaters for a quantum circuit {quantum_circuit.num_parameters} is different from the length {len(paramaters)} of the list of aruguments."
-            )
-        if paramaters is not None and not all(
-            isinstance(item, (int, float)) for item in paramaters
-        ):
-            raise Exception(
-                "The 'paramaters' setting in a PUB must be a list of numbers."
+                "A pub must be a QuantumCircuit or a tuple (circuit[, params[, shots]])."
             )
 
-        return (serialize_circuit(quantum_circuit), paramaters, shots)
+        if shots is not None:
+            if not isinstance(shots, int) or shots <= 0:
+                raise Exception("'shots' must be a positive integer.")
+
+        if not isinstance(quantum_circuit, QuantumCircuit):
+            raise Exception("First element must be a QuantumCircuit.")
+
+        parameters = self._normalize_numeric_sequence("parameters", parameters)
+
+        if quantum_circuit.num_parameters == 0 and parameters not in (None, []):
+            raise Exception(
+                "Circuit has zero parameters; parameters must be None or []."
+            )
+
+        if parameters is not None and quantum_circuit.num_parameters != len(parameters):
+            raise Exception(
+                f"Parameter count mismatch: circuit expects {quantum_circuit.num_parameters}, got {len(parameters)}."
+            )
+
+        return (serialize_circuit(quantum_circuit), parameters, shots)
 
     def validate_operator(self, operator):
-        if (
-            not isinstance(operator, Operator)
-            and not isinstance(operator, Pauli)
-            and not isinstance(operator, SparsePauliOp)
-            and not (
-                isinstance(operator, tuple)
-                and isinstance(operator[0], PauliList)
-                and isinstance(operator[1], list)
-                and (operator[1] and not all_numbers(operator[1]))
-            )
-        ):
-            raise Exception(
-                "The operator must be an instance of the Operator, Pauli, SparsePauliOp class or a tuple containing a PauliList and a possible empty list of numeric coefficents."
-            )
+        if isinstance(operator, (Operator, Pauli, SparsePauliOp, PauliList)):
+            if isinstance(operator, Operator):
+                matrix = operator.data
+                if not np.allclose(matrix, matrix.conj().T):
+                    print("WARNING: The operator you supplied is not Hermitian!")
+            return
 
-        if isinstance(operator, Operator):
-            matrix = operator.data
-            if not np.allclose(matrix, matrix.conj().T):
-                print("WARNING: The operator you supplied is not Hermitian!")
-
-        if (
-            isinstance(operator, tuple)
-            and isinstance(operator[0], PauliList)
-            and isinstance(operator[1], list)
-        ):
-            pauli_list = operator[0]
-            coefficients = operator[1]
-            if (
-                coefficients is not None
-                and len(coefficients) > 0
-                and len(pauli_list) != len(coefficients)
-            ):
+        if isinstance(operator, tuple):
+            if len(operator) != 2 or not isinstance(operator[0], PauliList):
                 raise Exception(
-                    "The number of Pauli terms in the Pauli list must match the number of coefficients or list of coefficients must be empty."
+                    "Operator tuple is only supported for (PauliList, coeffs_or_none)."
                 )
+
+            pauli_list, coeffs = operator
+            if coeffs is None:
+                return
+
+            if isinstance(coeffs, np.ndarray):
+                coeffs_seq = coeffs.ravel().tolist()
+            elif isinstance(coeffs, Sequence) and not isinstance(coeffs, (str, bytes)):
+                coeffs_seq = list(coeffs)
+            else:
+                raise Exception(
+                    "Coefficients must be a numeric sequence (list/tuple/np.ndarray) or None."
+                )
+
+            if len(coeffs_seq) == 0:
+                return
+            if not all(_is_number(c) for c in coeffs_seq):
+                raise Exception("Operator coefficients must be numeric.")
+            if len(coeffs_seq) != len(pauli_list):
+                raise Exception(
+                    "Number of coefficients must match number of Pauli terms (or empty/None for all-ones)."
+                )
+            return
+
+        raise Exception(
+            "Operator must be one of: Operator, Pauli, SparsePauliOp, PauliList, "
+            "or the tuple form (PauliList, coeffs_or_none)."
+        )
 
     def to_sparse_pauli_operator(self, operator, coeffs=None):
         if isinstance(operator, SparsePauliOp):
@@ -471,10 +619,14 @@ class InputData:
             return SparsePauliOp(operator)
 
         elif isinstance(operator, PauliList):
-            if coeffs is not None and len(coeffs) > 0 and len(coeffs) != len(operator):
-                raise ValueError(
-                    "Number of coefficients must match number of Pauli operators in PauliList"
-                )
+
+            if coeffs is not None:
+                if not hasattr(coeffs, "__len__"):
+                    raise ValueError("Coefficients must be a sequence (or None).")
+                if len(coeffs) > 0 and len(coeffs) != len(operator):
+                    raise ValueError(
+                        "Number of coefficients must match number of Pauli operators in PauliList"
+                    )
 
             coefficients = (
                 coeffs
@@ -486,14 +638,17 @@ class InputData:
 
         elif isinstance(operator, Operator):
             return SparsePauliOp.from_operator(operator)
+        raise ValueError(
+            "Unsupported operator type. Supported types are: Operator, Pauli, SparsePauliOp or PauliList and a possible empty list of numeric coefficents."
+        )
 
     def serialize_sparse_pauli_operator(self, sparse_op):
         if not isinstance(sparse_op, SparsePauliOp):
             raise ValueError("Input must be a SparsePauliOp")
 
         pauli_data = sparse_op.to_list()
-        pauli_terms = [term[0] for term in pauli_data]
-        coefficients = [term[1] for term in pauli_data]
+        pauli_terms = [term for (term, _) in pauli_data]
+        coefficients = [_to_complex_dict(coeff) for (_, coeff) in pauli_data]
         return pauli_terms, coefficients
 
 
@@ -508,8 +663,8 @@ class QuantumFlowsProvider:
     _keycloak_url_dev = "http://localhost"
     _keycloak_url_prod = "https://keycloak.transilvania-quantum.com"
 
-    def __init__(self, use_https=True, debug=False):
-        self._use_https = use_https
+    def __init__(self, verify_tls=True, debug=False):
+        self._verify_tls = verify_tls
         self._debug = debug
         self._state = None
         self._access_token = None
@@ -529,7 +684,7 @@ class QuantumFlowsProvider:
             else f"{self._keycloak_url_prod}"
         )
 
-        if not self._is_server_online(self._keycloak_server_url):
+        if not self._is_server_reachable(self._keycloak_server_url):
             raise SystemExit(
                 f"The service you are trying to access at: {self._asp_net_url}, is not responding. \
 In case the service has been recently started please wait 5 minutes for it to become fully functional."
@@ -539,7 +694,7 @@ In case the service has been recently started please wait 5 minutes for it to be
             server_url=self._keycloak_server_url,
             client_id=self._client_id,
             realm_name=self._realm_name,
-            verify=self._use_https,
+            verify=self._verify_tls,
         )
 
     def authenticate(self):
@@ -573,26 +728,42 @@ In case the service has been recently started please wait 5 minutes for it to be
                 time.time() + token_response["refresh_expires_in"] - 5
             )  # seconds
             print("Authentication successful.")
-        except AuthenticationFailure as ex:
-            print(ex.message)
         except AuthorizationFailure as ex:
             print(
                 "Failed to authenticate with the quantum provider. Make sure you are using the correct Gmail account."
             )
             if self._debug:
-                print("More details: ", ex.message)
+                print("More details: ", str(ex))
+                traceback.print_exc()
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as ex:
             print("Failed to authenticate with the quantum provider.")
             if "Connection refused" in str(ex):
                 print("The remote service does not respond. Please try again later.")
             if self._debug:
-                print("Unexpected exception: ", ex)
+                print("Unexpected exception: ", str(ex))
+
+    def _ensure_access_token(self) -> None:
+        # refresh token must exist and be valid
+        if self._refresh_token is None or self._refresh_token_expiration_time is None:
+            self._clear_tokens(clear_refresh=True)
+            raise AuthorizationFailure("Not authenticated; please authenticate.")
+
+        if self.is_refresh_token_expired():
+            self._clear_tokens(clear_refresh=True)
+            raise AuthorizationFailure("Session timed out; please re-authenticate.")
+
+        # access token must exist and be fresh; otherwise refresh
+        if self._access_token is None or self.is_token_expired():
+            ok = self._try_refresh_tokens()
+            if not ok or self._access_token is None:
+                # if refresh failed, _try_refresh_tokens already cleared appropriately
+                raise AuthorizationFailure("Session expired; please re-authenticate.")
 
     def submit_job(
         self, *, backend=None, circuit=None, circuits=None, shots=None, comments=""
     ):
-        if not self._verify_user_is_authenticated():
-            return
         if not backend:
             print("Please specify the backend name.")
             return
@@ -639,7 +810,7 @@ In case the service has been recently started please wait 5 minutes for it to be
                 job_data = {
                     "BackendName": backend,
                     "Circuit": None,
-                    "Circuits": [serialize_circuit(circuit) for circuit in circuits],
+                    "Circuits": [serialize_circuit(circ) for circ in circuits],
                     "Shots": shots,
                     "Comments": comments,
                     "QiskitVersion": qiskit.__version__,
@@ -648,12 +819,12 @@ In case the service has been recently started please wait 5 minutes for it to be
                 f"{self._asp_net_url}/api/job", job_data
             )
             if status_code == 201:
+                if not isinstance(result, dict):
+                    raise Exception(
+                        f"Expected JSON response for job creation, instead got:\n{str(result)}."
+                    )
                 return Job(result["id"])
-            elif status_code == 401:
-                print(
-                    "You are not authorized to access this service. Please try to authenticate first and make sure you have signed on on our web-site with a Google email account."
-                )
-            elif "Under Maintenance" in result:
+            elif isinstance(result, str) and "Under Maintenance" in result:
                 print(
                     "The remote service is currently under maintenance. Please try again later."
                 )
@@ -662,6 +833,12 @@ In case the service has been recently started please wait 5 minutes for it to be
                     f"Job submission has failed with http status code: {status_code}. \nRemote server response: '{result}'"
                 )
                 return Job(None)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except AuthorizationFailure as ex:
+            print(str(ex))
+        except requests.exceptions.RequestException as ex:
+            print("Network error talking to provider:", ex)
         except Exception as ex:
             print(str(ex))
 
@@ -671,20 +848,25 @@ In case the service has been recently started please wait 5 minutes for it to be
         backend=None,
         shots=None,
         workflow_id=None,
+        tag="",
         comments="",
         max_fun_evaluations=None,
-        input_data=InputData(),
+        input_data=None,
     ):
-        if not self._verify_user_is_authenticated():
-            return
+        if input_data is None:
+            input_data = InputData()
+        if shots is not None:
+            if not isinstance(shots, int) or shots <= 0:
+                print("The 'shots' input argument must be a positive integer.")
+                return
         if not backend:
             print("Please specify a backend name.")
             return
+        if not isinstance(backend, str):
+            print("The 'backend' input argument must be a string.")
+            return
         if not workflow_id:
             print("Please specify a workflow Id.")
-            return
-        if shots is not None and not isinstance(shots, int):
-            print("The optional number of shots input argument must be an integer.")
             return
         if not self.is_valid_uuid(workflow_id):
             print("The specified workflow Id is not a valid GUID.")
@@ -695,6 +877,21 @@ In case the service has been recently started please wait 5 minutes for it to be
                     "The optional 'max-fun-evaluations' input argument must be a positive integer."
                 )
                 return
+        if not isinstance(tag, str):
+            print("The optional 'tag' input argument must be a string.")
+            return
+        if len(tag) > 100:
+            print("The optional 'tag' input argument must be at most 100 characters.")
+            return
+        if not isinstance(comments, str):
+            print("The optional 'comments' input argument must be a string.")
+            return
+        if len(comments) > 1000:
+            print(
+                "The optional 'comments' input argument must be at most 1000 characters."
+            )
+            return
+
         try:
             input_data_labels = []
             input_data_items = []
@@ -707,13 +904,22 @@ In case the service has been recently started please wait 5 minutes for it to be
             for input_data_label in input_data.data.keys():
                 input_data_labels.append(input_data_label)
                 content = input_data.data[input_data_label]
-                input_data_items.append(
-                    json.dumps(content, indent=2, cls=CustomJSONEncoder)
-                )
+                try:
+                    dumped = json.dumps(content, indent=2, cls=CustomJSONEncoder)
+                except ValueError as e:
+                    raise Exception(
+                        f"Input data '{input_data_label}' has invalid format: {e}"
+                    )
+                except (OverflowError, TypeError) as e:
+                    raise Exception(
+                        f"Input data '{input_data_label}' content must be JSON serializable: {e}"
+                    )
+                input_data_items.append(dumped)
             job_data = {
                 "BackendName": backend,
                 "WorkflowId": workflow_id,
                 "Shots": shots,
+                "Tag": tag,
                 "Comments": comments,
                 "MaxFunEvaluations": max_fun_evaluations,
                 "InputDataLabels": input_data_labels,
@@ -724,22 +930,26 @@ In case the service has been recently started please wait 5 minutes for it to be
                 f"{self._asp_net_url}/api/workflow-job", job_data
             )
             if status_code == 201:
+                if not isinstance(result, dict):
+                    raise Exception(
+                        f"Expected JSON response for job creation, instead got:\n{str(result)}."
+                    )
                 return WorkflowJob(result["id"])
-            elif status_code == 401:
-                print(
-                    "You are not authorized to access this service. Please try to authenticate first and make sure you have signed on on our web-site with a Google email account."
-                )
             else:
                 print(
                     f"Workflow job submission has failed with http status code: {status_code}. \nRemote server response: '{result}'"
                 )
                 return WorkflowJob(None)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except AuthorizationFailure as ex:
+            print(str(ex))
+        except requests.exceptions.RequestException as ex:
+            print("Network error talking to provider:", ex)
         except Exception as ex:
             print(str(ex))
 
     def get_backends(self):
-        if not self._verify_user_is_authenticated():
-            return
         try:
             response = self._make_get_request(f"{self._asp_net_url}/api/backends")
             status_code = response.status_code
@@ -755,16 +965,18 @@ In case the service has been recently started please wait 5 minutes for it to be
                     )
             else:
                 print(f"Request has failed with http status code: {status_code}.")
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except AuthorizationFailure as ex:
+            print(str(ex))
         except Exception as ex:
             print(str(ex))
 
     def get_job_status(self, job):
-        if not self._verify_user_is_authenticated():
-            return
-        if job is None or job.id is None:
+        if job is None or job.id() is None:
             print("This job is not valid.")
             return
-        if type(job) == Job:
+        if isinstance(job, Job):
             try:
                 response = self._make_get_request(
                     f"{self._asp_net_url}/api/job/status/{job.id()}"
@@ -774,9 +986,14 @@ In case the service has been recently started please wait 5 minutes for it to be
                     print("Job status: ", response.text)
                 else:
                     print(f"Request has failed with http status code: {status_code}.")
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except AuthorizationFailure as ex:
+                print(str(ex))
+                return
             except Exception as ex:
                 print(str(ex))
-        elif type(job) == WorkflowJob:
+        elif isinstance(job, WorkflowJob):
             try:
                 response = self._make_get_request(
                     f"{self._asp_net_url}/api/workflow-job/status/{job.id()}"
@@ -786,16 +1003,18 @@ In case the service has been recently started please wait 5 minutes for it to be
                     print("Job status: ", response.text)
                 else:
                     print(f"Request has failed with http status code: {status_code}.")
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except AuthorizationFailure as ex:
+                print(str(ex))
             except Exception as ex:
                 print(str(ex))
 
     def get_job_result(self, job):
-        if not self._verify_user_is_authenticated():
-            return
-        if job is None or job.id is None:
+        if job is None or job.id() is None:
             print("This job is not valid.")
             return
-        if type(job) == Job:
+        if isinstance(job, Job):
             try:
                 response = self._make_get_request(
                     f"{self._asp_net_url}/api/job/result/{job.id()}"
@@ -805,48 +1024,73 @@ In case the service has been recently started please wait 5 minutes for it to be
                     print(response.text)
                 else:
                     print(f"Request has failed with http status code: {status_code}.")
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except AuthorizationFailure as ex:
+                print(str(ex))
             except Exception as ex:
                 print(str(ex))
-        elif type(job) == WorkflowJob:
+        elif isinstance(job, WorkflowJob):
             print("Operation not supported for workflow jobs.")
 
-    def _verify_user_is_authenticated(self):
-        if (
-            self._access_token is None
-            or self._refresh_token is None
-            or self._refresh_token_expiration_time is None
-        ):
-            print(
-                "You are not authorized to access this service. Please try to authenticate first and make sure you have signed on on our web-site with a Google email account."
-            )
-            return False
-        if self.is_refresh_token_expired():
-            print("You session timed out, you need to re-authenticate!")
-            return False
-        return True
-
     def _make_get_request(self, api_url):
-        if self.is_token_expired():
-            self._try_refresh_tokens()
-        return requests.get(
+        self._ensure_access_token()
+        response = requests.get(
             api_url,
             headers={"Authorization": f"Bearer {self._access_token}"},
-            verify=self._use_https,
+            verify=self._verify_tls,
+            timeout=DEFAULT_TIMEOUT,
         )
+        if response.status_code == 401:
+            # access token rejected; try refresh once
+            self._access_token = None
+            self._token_expiration_time = None
+            self._ensure_access_token()
+            response = requests.get(
+                api_url,
+                headers={"Authorization": f"Bearer {self._access_token}"},
+                verify=self._verify_tls,
+                timeout=DEFAULT_TIMEOUT,
+            )
+        # second 401 => hard fail
+        if response.status_code == 401:
+            self._clear_tokens(clear_refresh=True)
+            raise AuthorizationFailure(
+                "You are not authorized to access this service. Please try to authenticate first and make sure you have signed on on our web-site with a Google email account."
+            )
+        return response
 
     def _make_post_request(self, api_url, data):
-        if self.is_token_expired():
-            self._try_refresh_tokens()
+        self._ensure_access_token()
         response = requests.post(
             api_url,
             json=data,
             headers={"Authorization": f"Bearer {self._access_token}"},
-            verify=self._use_https,
+            verify=self._verify_tls,
+            timeout=DEFAULT_TIMEOUT,
         )
+        if response.status_code == 401:
+            # access token rejected; try refresh once
+            self._access_token = None
+            self._token_expiration_time = None
+            self._ensure_access_token()
+            response = requests.post(
+                api_url,
+                json=data,
+                headers={"Authorization": f"Bearer {self._access_token}"},
+                verify=self._verify_tls,
+                timeout=DEFAULT_TIMEOUT,
+            )
+        # second 401 => hard fail
+        if response.status_code == 401:
+            self._clear_tokens(clear_refresh=True)
+            raise AuthorizationFailure(
+                "You are not authorized to access this service. Please try to authenticate first and make sure you have signed on on our web-site with a Google email account."
+            )
         try:
-            json = response.json()
-            return (response.status_code, json)
-        except:
+            payload = response.json()
+            return (response.status_code, payload)
+        except ValueError:
             return (response.status_code, response.text)
 
     def is_token_expired(self):
@@ -859,34 +1103,80 @@ In case the service has been recently started please wait 5 minutes for it to be
             return True
         return time.time() > self._refresh_token_expiration_time
 
-    def _try_refresh_tokens(self):
+    def _clear_tokens(self, *, clear_refresh: bool = True) -> None:
+        self._access_token = None
+        self._token_expiration_time = None
+        if clear_refresh:
+            self._refresh_token = None
+            self._refresh_token_expiration_time = None
+
+    def _try_refresh_tokens(self) -> bool:
         try:
             token_response = self._keycloak_openid.token(
-                grant_type="refresh_token", refresh_token=self._refresh_token
+                grant_type="refresh_token",
+                refresh_token=self._refresh_token,
             )
             self._access_token = token_response["access_token"]
             self._refresh_token = token_response["refresh_token"]
-            self._token_expiration_time = (
-                time.time() + token_response["expires_in"] - 5
-            )  # seconds
+            self._token_expiration_time = time.time() + token_response["expires_in"] - 5
             self._refresh_token_expiration_time = (
                 time.time() + token_response["refresh_expires_in"] - 5
-            )  # seconds
-        except:
-            pass
-
-    def _is_server_online(self, url):
-        try:
-            response = requests.get(url, verify=self._use_https)
-            if response.status_code == 200:
-                return True
+            )
+            return True
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as ex:
+            clear_refresh = False
+            is_transient = isinstance(ex, requests.exceptions.RequestException)
+            msg = str(ex).lower()
+            transient_markers = [
+                "timeout",
+                "timed out",
+                "connection aborted",
+                "connection refused",
+                "connection reset",
+                "temporary failure",
+                "temporarily unavailable",
+                "service unavailable",
+                "bad gateway",
+                "gateway timeout",
+                "name or service not known",
+                "dns",
+            ]
+            if any(m in msg for m in transient_markers):
+                is_transient = True
+            invalid_markers = [
+                "invalid_grant",
+                "refresh token is invalid",
+                "refresh_token is invalid",
+                "token is not active",
+                "session not active",
+            ]
+            if (not is_transient) and any(m in msg for m in invalid_markers):
+                clear_refresh = True
+            self._clear_tokens(clear_refresh=clear_refresh)
+            if self._debug:
+                print("Failed to refresh authentication tokens:", ex)
+                print(
+                    "Classified as transient:",
+                    is_transient,
+                    "clear_refresh:",
+                    clear_refresh,
+                )
             return False
+
+    def _is_server_reachable(self, url):
+        try:
+            requests.get(url, verify=self._verify_tls, timeout=DEFAULT_TIMEOUT)
+            return True
         except requests.exceptions.RequestException as e:
             return False
 
     def _is_server_under_maintenance(self, url):
         try:
-            response = requests.get(url, verify=self._use_https)
+            response = requests.get(
+                url, verify=self._verify_tls, timeout=DEFAULT_TIMEOUT
+            )
             if "Under Maintenance" in response.text:
                 return True
             return False
@@ -898,10 +1188,11 @@ In case the service has been recently started please wait 5 minutes for it to be
         response = requests.post(
             f"{self._asp_net_url}/auth/storestate",
             json={"state": state},
-            verify=self._use_https,
+            verify=self._verify_tls,
+            timeout=DEFAULT_TIMEOUT,
         )
         if response.status_code != 200:
-            if not self._is_server_online(self._asp_net_url):
+            if not self._is_server_reachable(self._asp_net_url):
                 raise AuthenticationFailure(
                     f"The service you are trying to access at: {self._asp_net_url} is not online."
                 )
@@ -930,22 +1221,34 @@ In case the service has been recently started please wait 5 minutes for it to be
 
         timeout_seconds = 16
         start_time = time.time()
+        accept_missing_code_once = True
 
         try:
             while (time.time() - start_time) < timeout_seconds:
                 response = requests.get(
                     self._show_code_callback_url,
                     params={"state": self._state},
-                    verify=self._use_https,
+                    verify=self._verify_tls,
+                    timeout=DEFAULT_TIMEOUT,
                 )
-                # TODO: what if I use a wrong email account
-                if response.status_code == 400:
+                if response.status_code != 200:
                     if response.text == "Authorization state is missing.":
-                        raise Exception()
+                        raise Exception(
+                            "The authentication process was not initiated properly. Please try to authenticate again."
+                        )
                     time.sleep(1)
                     continue
-                data = response.text
-                auth_code = data.split(": ")[1]
+                parts = response.text.split("Your authorization code is: ", 1)
+                if len(parts) != 2 or not parts[1].strip():
+                    if accept_missing_code_once:
+                        accept_missing_code_once = False
+                        time.sleep(3)
+                        continue
+                    else:
+                        raise Exception(
+                            "The server failed to provide a valid authorization code. Please try to authenticate again, if it keeps failing send a bug report using the feedback form."
+                        )
+                auth_code = parts[1].strip()
                 return auth_code
         except Exception as e:
             if self._debug:
@@ -958,9 +1261,11 @@ In case the service has been recently started please wait 5 minutes for it to be
             "Authorization code was not received. Please make sure you are using a Google account which you have signed-on our web-site. If our website is not online please try again later."
         )
 
-    def is_valid_uuid(self, value: str) -> bool:
+    def is_valid_uuid(self, value) -> bool:
+        if not isinstance(value, str):
+            return False
         try:
-            uuid_obj = uuid.UUID(value)
-            return str(uuid_obj) == value.lower()
-        except (ValueError, TypeError):
+            uuid.UUID(value)  # parses many valid forms
+            return True
+        except (ValueError, TypeError, AttributeError):
             return False
