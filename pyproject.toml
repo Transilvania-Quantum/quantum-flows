@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "quantum-flows"
-version = "0.1.21"
+version = "0.1.22"
 description = "A python library for interacting with Transilvania-Quantum Quantum Flows quantum computing API backbone."
 authors = ["Radu Marginean <radu.marginean@transilvania-quantum.com>"]
 license='MIT'
@@ -9,12 +9,13 @@ repository = "https://github.com/Transilvania-Quantum/quantum-flows"
 packages = [{include = "quantum_flows"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 python-keycloak = "^4.7.3"
 cryptography = "^44.0.2"
 qiskit-nature = "^0.7.2"
 qiskit = "2.3.0"
 qiskit-optimization = {version = "0.7.0", extras = ["cplex"]}
+ipython = "^9.10.0"
 
 
 [build-system]
