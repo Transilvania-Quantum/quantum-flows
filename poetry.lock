@@ -259,33 +259,6 @@ files = [
 ]
 
 [[package]]
-name = "cplex"
-version = "22.1.2.0"
-description = "A Python interface to the CPLEX Callable Library, Community Edition."
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-markers = "python_version < \"3.13\" and platform_system != \"Darwin\" or python_version == \"3.11\""
-files = [
-    {file = "cplex-22.1.2.0-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:05aa14e05a374eef925618b7b229fb6720932573247aae7f1766efb74385a534"},
-    {file = "cplex-22.1.2.0-cp310-cp310-manylinux2014_ppc64le.whl", hash = "sha256:e7097f6cc23180e97a63d5dfdcb37ab9833fffdc38fa7ee34e7ec6e5d34a8d0f"},
-    {file = "cplex-22.1.2.0-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:c43e67eac01a89b71b2ede70257889bf74a0d2c221f0e31ffcdc101c5520f79c"},
-    {file = "cplex-22.1.2.0-cp310-cp310-win_amd64.whl", hash = "sha256:c58101462cc8aee00ef041c003e9776a4877dd1563fc5d6a737a953ce51f9f83"},
-    {file = "cplex-22.1.2.0-cp311-cp311-manylinux2014_aarch64.whl", hash = "sha256:f976ce0166bd0e68740e4b514d1395b4f16e8103ef50d9a8f157c1cc916db216"},
-    {file = "cplex-22.1.2.0-cp311-cp311-manylinux2014_ppc64le.whl", hash = "sha256:e875852bd46361b799950cc6854870a5e3d86f7238d4a8ba97648497521bb52b"},
-    {file = "cplex-22.1.2.0-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:bee12d488df86da5142ccb986fdf537df9ccff8837f33e5f0bc504b0e9b5d3f7"},
-    {file = "cplex-22.1.2.0-cp311-cp311-win_amd64.whl", hash = "sha256:afbbad8aaede41255b703ab758452df9a899dbad48366bd0c9991fb219d57062"},
-    {file = "cplex-22.1.2.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:feb5b9c6f437c3cacb0dc6b12fde6bdf6e266074cac9f535e641794363a26254"},
-    {file = "cplex-22.1.2.0-cp312-cp312-manylinux2014_ppc64le.whl", hash = "sha256:3e8fd6127121a28ac6499cda16c5a96fa45e5ba92c20f44abc18ee734aef819e"},
-    {file = "cplex-22.1.2.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:0c28a0a3b1dde31d2640965feb5d7c513ade2ad4faabf58f7783c21093674b8b"},
-    {file = "cplex-22.1.2.0-cp312-cp312-win_amd64.whl", hash = "sha256:aa3c0ecec114a0e706def5674f94f04a44b6c5500168909381c034951677fcca"},
-    {file = "cplex-22.1.2.0-cp39-cp39-manylinux2014_aarch64.whl", hash = "sha256:9332932334e3a9682a2a239a08c0169fe50e3f8d08fec84b9b120c7191c90737"},
-    {file = "cplex-22.1.2.0-cp39-cp39-manylinux2014_ppc64le.whl", hash = "sha256:52ae74c59bac3d9a1319b7a6e4c0be94a9dc223fbcd028601dbf347ef8755ca4"},
-    {file = "cplex-22.1.2.0-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:3c8dc025044718863493fa8912ef6de5a70e8440e9fb0b59748b0207064f1507"},
-    {file = "cplex-22.1.2.0-cp39-cp39-win_amd64.whl", hash = "sha256:bb43252083f7d8a8b67b18876b0387ea84304c8a200461b8a8426ef8a4b4bb78"},
-]
-
-[[package]]
 name = "cryptography"
 version = "44.0.3"
 description = "cryptography is a package which provides cryptographic recipes and primitives to Python developers."
@@ -927,19 +900,19 @@ visualization = ["Pillow (>=4.2.1)", "matplotlib (>=3.3)", "pydot", "pylatexenc 
 
 [[package]]
 name = "qiskit-algorithms"
-version = "0.3.1"
+version = "0.4.0"
 description = "Qiskit Algorithms: A library of quantum computing algorithms"
 optional = false
-python-versions = ">=3.8"
+python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "qiskit_algorithms-0.3.1-py3-none-any.whl", hash = "sha256:d6c31d88a1ed65a9c6382c233ef10ecb9562e726f7b1b7823a0d178d63d29a0a"},
-    {file = "qiskit_algorithms-0.3.1.tar.gz", hash = "sha256:cba9c573d47c0f9508745a5a2794298084ec4f8833781b426fa9b2cea0fca794"},
+    {file = "qiskit_algorithms-0.4.0-py3-none-any.whl", hash = "sha256:c8bfc119e270c7cd7d6013e62193914381bd71fd4cdc847c07b50c749fd0114d"},
+    {file = "qiskit_algorithms-0.4.0.tar.gz", hash = "sha256:b945e807c9b94ba2e0d2e02898b1f1e1a33efd3b4a6dc5a45bb787c6832d4093"},
 ]
 
 [package.dependencies]
 numpy = ">=1.17"
-qiskit = ">=0.44"
+qiskit = ">=1.0"
 scipy = ">=1.4"
 
 [[package]]
@@ -984,7 +957,6 @@ files = [
 ]
 
 [package.dependencies]
-cplex = {version = "*", optional = true, markers = "python_version < \"3.13\" and (platform_system != \"Darwin\" or python_version < \"3.12\") and extra == \"cplex\""}
 docplex = ">=2.21.207,<2.24.231 || >2.24.231"
 networkx = ">=2.6.3"
 numpy = ">=1.17"
@@ -1269,4 +1241,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "f50e9d1ef48c5fb9aefa4fbb78c4dd88d6f927a550c488aa2e75dc6799e652b7"
+content-hash = "5159aeb24ab0675f4d67af09da9dc34d949e1d8dfccd21215073b252119bf542"
