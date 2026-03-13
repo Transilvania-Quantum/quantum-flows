@@ -42,6 +42,7 @@ class QuantumFlowsOutput:
 
     def add_ansatz(
         self,
+        ansatz_name=None,
         printed_circuit=None,
         open_qasm_circuit=None,
         parameters_array=None,
@@ -60,6 +61,7 @@ class QuantumFlowsOutput:
             )
 
         self.ansatz = {
+            "ansatz-name": ansatz_name,
             "printed-circuit-string": printed_circuit,
             "open-qasm-string": open_qasm_circuit,
             "ansatz-parameters": parameters_array,
