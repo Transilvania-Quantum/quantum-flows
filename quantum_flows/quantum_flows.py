@@ -848,6 +848,7 @@ In case the service has been recently started please wait 5 minutes for it to be
         backend=None,
         shots=None,
         workflow_id=None,
+        project="",
         tag="",
         comments="",
         max_fun_evaluations=None,
@@ -877,8 +878,16 @@ In case the service has been recently started please wait 5 minutes for it to be
                     "The optional 'max-fun-evaluations' input argument must be a positive integer."
                 )
                 return
+        if not isinstance(project, str):
+            print("The optional 'project' input argument must be a string.")
+            return
         if not isinstance(tag, str):
             print("The optional 'tag' input argument must be a string.")
+            return
+        if len(project) > 100:
+            print(
+                "The optional 'project' input argument must be at most 100 characters."
+            )
             return
         if len(tag) > 100:
             print("The optional 'tag' input argument must be at most 100 characters.")
@@ -919,6 +928,7 @@ In case the service has been recently started please wait 5 minutes for it to be
                 "BackendName": backend,
                 "WorkflowId": workflow_id,
                 "Shots": shots,
+                "Project": project,
                 "Tag": tag,
                 "Comments": comments,
                 "MaxFunEvaluations": max_fun_evaluations,
