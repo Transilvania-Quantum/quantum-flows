@@ -7,6 +7,8 @@ class QuantumFlowsOutput:
         self.job_metadata = None
 
     def add_workflow_title(self, title):
+        if len(title) > 200:
+            raise ValueError("Workflow title cannot exceed 200 characters.")
         self.result["result-title-string"] = title
 
     def add_workflow_result(self, result):
